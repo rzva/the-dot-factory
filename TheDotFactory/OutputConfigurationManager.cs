@@ -144,11 +144,11 @@ namespace TheDotFactory
         public int spaceGenerationPixels = 2;
 
         // variable formats
-        public string varNfBitmaps = "const uint_8 {0}Bitmaps";
-        public string varNfCharInfo = "const FONT_CHAR_INFO {0}Descriptors";
-        public string varNfFontInfo = "const FONT_INFO {0}FontInfo";
-        public string varNfWidth = "const uint_8 {0}Width";
-        public string varNfHeight = "const uint_8 {0}Height";
+		public string varNfBitmaps = "const uint8_t {0}Bitmaps[] PROGMEM";
+		public string varNfCharInfo = "const FONT_CHAR_INFO {0}Descriptors[] PROGMEM";
+		public string varNfFontInfo = "const FONT_INFO {0}FontInfo PROGMEM";
+        public string varNfWidth = "const uint8_t {0}Width";
+        public string varNfHeight = "const uint8_t {0}Height";
 
         // display name
         public string displayName = "";

@@ -1232,7 +1232,7 @@ namespace TheDotFactory
             //
 
             // search for '[number, zero or more] '
-            const string arrayRegexString = @"\[[0-9]*\]";
+            const string arrayRegexString = @"\[[0-9]*\]|PROGMEM";
 
             // modify the expression
             expression = Regex.Replace(expression, arrayRegexString, "");
@@ -1314,13 +1314,13 @@ namespace TheDotFactory
                 {
                     // it may not be far enough to generate a new group but it still may be non-sequential
                     // in this case we need to generate place holders
-                    for (char sequentialCharIndex = (char)(previousCharacter + 1);
+                   /* for (char sequentialCharIndex = (char)(previousCharacter + 1);
                             sequentialCharIndex < currentCharacter;
                             ++sequentialCharIndex)
                     {
                         // add the character placeholder to the current char block
                         charDescArrayAddCharacter(characterBlock, fontInfo, sequentialCharIndex, 0, 0, 0);
-                    }
+                    }*/
 
                     // fall through and add to current block
                 }
@@ -1363,10 +1363,9 @@ namespace TheDotFactory
             if (!includeTypeDefinition) variableName = getVariableNameFromExpression(variableName);
 
             // return the block name
-            return String.Format("{0}{1}{2}",
+            return String.Format("{0}{1}",
                                     variableName,
-                                    includeBlockIndex ? blockIdString : "",
-                                    includeTypeDefinition ? "[]" : "");
+                                    includeBlockIndex ? blockIdString : "");
         }
 
         // get the display string for a character (ASCII is displayed as 'x', non-ASCII as numeric)
@@ -1438,7 +1437,7 @@ namespace TheDotFactory
                                                     getCharacterDescString(m_outputConfig.descCharHeight, character.height),
                                                     character.offset,
                                                     m_commentStartString,
-                                                    character.character,
+                                                    character.character != '\\' ? character.character.ToString() : "'\\'",
                                                     m_commentEndString + " ");
                 }
 
@@ -1468,7 +1467,7 @@ namespace TheDotFactory
                 }
 
                 // format the block lookup header
-                resultTextSource += String.Format("const FONT_CHAR_INFO_LOOKUP {0}[] = " + nl+"{{" + nl, 
+                resultTextSource += String.Format("const FONT_CHAR_INFO_LOOKUP {0} = " + nl+"{{" + nl, 
                                                     getCharacterDescriptorArrayLookupDisplayString(fontInfo));
 
                 // iterate
@@ -1532,7 +1531,12 @@ namespace TheDotFactory
             }
 
             // get bitmap name
-            string charBitmapVarName = String.Format(m_outputConfig.varNfBitmaps, getFontName(ref fontInfo.font)) + "[]";
+            string charBitmapVarName = String.Format(m_outputConfig.varNfBitmaps, getFontName(ref fontInfo.font));
+
+
+            // Add the definition file for our structures
+            resultTextHeader += "#include \"font.h\"" + nl + nl;
+
 
             // header var
             resultTextHeader += String.Format("extern {0};" + nl, charBitmapVarName);
@@ -1627,6 +1631,80 @@ namespace TheDotFactory
                                                                 m_commentEndString);
             }
 
+            // Generate the get function
+			string getFunctionName = getFontName(ref fontInfo.font) + "GetFunction";
+
+			resultTextSource += "uint8_t " + getFunctionName + "(char c)" + nl + "{" + nl
+				+ "\tuint8_t b = (uint8_t)c;" + nl + nl;
+
+            {
+                int start_pos = 0;
+                byte start_val = Convert.ToByte(fontInfo.characters[0].character);
+				byte prev_val = start_val;
+                bool first = true;
+
+                for (int charIdx = 1; charIdx < fontInfo.characters.Length; ++charIdx)
+                {
+                    byte b = Convert.ToByte(fontInfo.characters[charIdx].character);
+
+                    // If we don't have a continuous span, close the previous span and start a new one
+                    if (prev_val + 1 < b)
+                    {
+						byte prev = Convert.ToByte(fontInfo.characters[charIdx - 1].character);
+
+                        if (first)
+						{
+							resultTextSource += "\t";
+                            first = false;
+						}
+                        else
+                            resultTextSource += "\telse ";
+
+						resultTextSource += "if (";
+
+                        // If the old span is greater than one character
+                        if (charIdx > start_pos + 1)
+                        {
+							if (first)
+								resultTextSource += "b >= " + start_val.ToString() + " && ";
+
+							resultTextSource += "b <= " + prev.ToString() + ") return (c - " + start_val.ToString() + ") + " + start_pos.ToString() + ";" + nl;
+
+                        }
+						// If it's just one character
+						else
+							resultTextSource += "b == " + start_val.ToString() + ") return " + start_pos.ToString() + ";" + nl;
+
+						start_pos = charIdx;
+						start_val = Convert.ToByte(fontInfo.characters[charIdx].character);
+                    }
+
+					prev_val = b;
+                }
+
+				// Add the final condition
+				int lastIdx = fontInfo.characters.Length - 1;
+				byte last = Convert.ToByte(fontInfo.characters[lastIdx].character);
+
+				if (!first)
+					resultTextSource += "\telse ";
+				else
+					resultTextSource += "\t";
+
+				resultTextSource += "if (";
+
+				// If the old span is greater than one character
+				if (lastIdx > start_pos + 1)
+					resultTextSource += "b >= " + start_val.ToString() + " && " + "b <= " + last.ToString() + ") return (c - " + start_val.ToString() + ") + " + start_pos.ToString() + ";" + nl;
+				// If it's just one character
+				else
+					resultTextSource += "b == " + start_val.ToString() + ") return " + start_pos.ToString() + ";" + nl;
+
+				resultTextSource += "\telse return 0;" + nl;
+            }
+
+            resultTextSource += "}" + nl + nl;
+
             // font info
             resultTextSource += String.Format("{2} =" + nl+"{{" + nl +
                                               "{3}" +
@@ -1635,6 +1713,7 @@ namespace TheDotFactory
                                               "{6}" +
                                               "{7}" +
                                               "\t{8}, {0} Character bitmap array{1}" + nl +
+											  "\t{9}, {0} The function that translates regular characters to this font's characters{1}" + nl +
                                               "}};" + nl,
                                               m_commentStartString,
                                               m_commentEndString,
@@ -1644,19 +1723,22 @@ namespace TheDotFactory
                                               getCharacterDisplayString(fontInfo.endChar),
                                               spaceCharacterPixelWidthString,
                                               getFontInfoDescriptorsString(fontInfo, blockLookupGenerated),
-                                              getVariableNameFromExpression(String.Format(m_outputConfig.varNfBitmaps, getFontName(ref fontInfo.font))));
+                                              getVariableNameFromExpression(String.Format(m_outputConfig.varNfBitmaps, getFontName(ref fontInfo.font))),
+											  getFunctionName);
 
             // add the appropriate entity to the header
             if (blockLookupGenerated)
             {
                 // add block lookup to header
-                resultTextHeader += String.Format("extern const FONT_CHAR_INFO_LOOKUP {0}[];" + nl, getCharacterDescriptorArrayLookupDisplayString(fontInfo));
+                resultTextHeader += String.Format("extern const FONT_CHAR_INFO_LOOKUP {0};" + nl, getCharacterDescriptorArrayLookupDisplayString(fontInfo));
             }
             else
             {
                 // add block lookup to header
-                resultTextHeader += String.Format("extern {0}[];" + nl, String.Format(m_outputConfig.varNfCharInfo, getFontName(ref fontInfo.font)));
+                resultTextHeader += String.Format("extern {0};" + nl, String.Format(m_outputConfig.varNfCharInfo, getFontName(ref fontInfo.font)));
             }
+
+			resultTextHeader = Regex.Replace(resultTextHeader, "\\s?PROGMEM", "");
         }
     
         // get the descriptors
@@ -1695,6 +1777,8 @@ namespace TheDotFactory
         {
             // do nothing if no chars defined
             if (txtInputText.Text.Length == 0) return;
+
+			resultTextSource += "#include <avr/pgmspace.h>" + nl;
             
             // according to config
             if (m_outputConfig.commentVariableName)
@@ -1908,7 +1992,7 @@ namespace TheDotFactory
 
             Font fRegular = new Font("Courier New", 10, FontStyle.Regular);
             Font fBold = new Font("Courier New", 10, FontStyle.Bold);
-            String[] keywords = { "uint_8", "const", "extern", "char", "unsigned", "int", "short", "long" };
+            String[] keywords = { "uint8_t", "const", "extern", "char", "unsigned", "int", "short", "long" };
             Regex re = new Regex(@"([ \t{}();])");
 
             // iterate over the richtext box and color it
@@ -2125,11 +2209,15 @@ namespace TheDotFactory
             if (dlgSaveAs.ShowDialog() != DialogResult.Cancel)
             {
                 // get the file name
-                string moduleName = dlgSaveAs.FileName;
+                string moduleName = Path.GetFileNameWithoutExtension(dlgSaveAs.FileName);
+                string moduleFullPath = Path.GetDirectoryName(dlgSaveAs.FileName) + "\\" + moduleName;
+
+                // Add the #include line
+                string sourceText = String.Format("#include \"{0}.h\"", moduleName) + nl + nl + txtOutputTextSource.Text;
 
                 // save the text
-                txtOutputTextSource.SaveFile(String.Format("{0}.c", moduleName), RichTextBoxStreamType.PlainText);
-                txtOutputTextHeader.SaveFile(String.Format("{0}.h", moduleName), RichTextBoxStreamType.PlainText);
+                System.IO.File.WriteAllText(String.Format("{0}.cpp", moduleFullPath), sourceText);
+                txtOutputTextHeader.SaveFile(String.Format("{0}.h", moduleFullPath), RichTextBoxStreamType.PlainText);
             }
         }
     }
